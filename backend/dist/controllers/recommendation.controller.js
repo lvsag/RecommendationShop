@@ -1,0 +1,205 @@
+"use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.explainRecommendationQuery = exports.getRecommendations = void 0;
+const neo4j_driver_1 = __importDefault(require("neo4j-driver"));
+const neo4j_js_1 = require("../config/neo4j.js");
+const getRecommendations = async (req, res) => {
+    const session = (0, neo4j_js_1.getNeo4jSession)();
+    try {
+        const { customerId } = req.params;
+        const limit = Math.max(1, Math.min(20, parseInt(req.query.limit) || 10));
+        if (!customerId) {
+            res.status(400).json({ success: false, message: 'Thiếu customerId' });
+            return;
+        }
+        // 1. Kiểm tra sự tồn tại của Customer
+        const checkCustomerCypher = `MATCH (c:Customer {id: $customerId}) RETURN c.name AS name`;
+        const checkResult = await session.run(checkCustomerCypher, { customerId });
+        if (checkResult.records.length === 0) {
+            res.status(404).json({ success: false, message: `Khách hàng ID ${customerId} không tồn tại` });
+            return;
+        }
+        const customerName = checkResult.records[0].get('name');
+        // 2. Thuật toán Collaborative Filtering bằng Cypher
+        // Path: (c1)-[:BOUGHT|VIEWED]->(p1)<-[:BOUGHT|VIEWED]-(c2)-[r2:BOUGHT|VIEWED]->(p2)
+        // Loại trừ các sản phẩm mà c1 ĐÃ MUA (còn xem thì vẫn gợi ý)
+        const collaborativeFilteringCypher = `
+      MATCH (c1:Customer {id: $customerId})
+      MATCH (c1)-[r1:BOUGHT|VIEWED]->(p1:Product)
+      MATCH (p1)<-[r_shared:BOUGHT|VIEWED]-(c2:Customer)
+      WHERE c2.id <> c1.id
+      MATCH (c2)-[r2:BOUGHT|VIEWED]->(p2:Product)
+      WHERE p2.id <> p1.id
+        AND NOT (c1)-[:BOUGHT]->(p2)
+      WITH p2,
+           count(DISTINCT CASE WHEN type(r2) = 'BOUGHT' THEN c2 END) AS coBoughtCount,
+           count(DISTINCT CASE WHEN type(r2) = 'VIEWED' THEN c2 END) AS coViewedCount,
+           count(DISTINCT c2) AS totalCoCustomers
+      WITH p2, coBoughtCount, coViewedCount, totalCoCustomers,
+           round((coBoughtCount * 3.0 + coViewedCount * 1.0), 2) AS recommendationScore
+      OPTIONAL MATCH (p2)-[:BELONGS_TO]->(cat:Category)
+      RETURN p2.id AS id,
+             p2.name AS name,
+             p2.price AS price,
+             p2.originalPrice AS originalPrice,
+             p2.discountPercent AS discountPercent,
+             p2.imageUrl AS imageUrl,
+             p2.rating AS rating,
+             p2.soldCount AS soldCount,
+             cat.name AS categoryName,
+             recommendationScore AS score,
+             coBoughtCount,
+             coViewedCount,
+             totalCoCustomers,
+             CASE
+               WHEN coBoughtCount > 0 AND coViewedCount > 0 THEN
+                 "Khách mua cùng cũng đã mua (" + toString(coBoughtCount) + ") & xem (" + toString(coViewedCount) + ")"
+               WHEN coBoughtCount > 0 THEN
+                 "Được " + toString(coBoughtCount) + " khách hàng mua cùng sở thích đã mua"
+               ELSE
+                 "Được " + toString(coViewedCount) + " khách hàng có cùng gu quan tâm"
+             END AS reason
+      ORDER BY recommendationScore DESC, p2.soldCount DESC, p2.rating DESC
+      LIMIT toInteger($limit)
+    `;
+        const cfResult = await session.run(collaborativeFilteringCypher, {
+            customerId,
+            limit: neo4j_driver_1.default.int(limit),
+        });
+        let recommendations = [];
+        let strategy = 'collaborative_filtering';
+        if (cfResult.records.length > 0) {
+            recommendations = cfResult.records.map((r) => ({
+                id: r.get('id'),
+                name: r.get('name'),
+                price: (0, neo4j_js_1.neo4jToPlain)(r.get('price')),
+                originalPrice: (0, neo4j_js_1.neo4jToPlain)(r.get('originalPrice')),
+                discountPercent: (0, neo4j_js_1.neo4jToPlain)(r.get('discountPercent')),
+                imageUrl: r.get('imageUrl'),
+                rating: (0, neo4j_js_1.neo4jToPlain)(r.get('rating')),
+                soldCount: (0, neo4j_js_1.neo4jToPlain)(r.get('soldCount')),
+                categoryName: r.get('categoryName'),
+                score: (0, neo4j_js_1.neo4jToPlain)(r.get('score')),
+                coBoughtCount: (0, neo4j_js_1.neo4jToPlain)(r.get('coBoughtCount')),
+                coViewedCount: (0, neo4j_js_1.neo4jToPlain)(r.get('coViewedCount')),
+                totalCoCustomers: (0, neo4j_js_1.neo4jToPlain)(r.get('totalCoCustomers')),
+                reason: r.get('reason'),
+            }));
+        }
+        else {
+            // 3. Fallback: Lấy Top sản phẩm bán chạy nhất toàn sàn cho khách hàng mới
+            strategy = 'cold_start_fallback';
+            const coldStartCypher = `
+        MATCH (p:Product)
+        OPTIONAL MATCH (p)<-[r:BOUGHT]-(c:Customer)
+        OPTIONAL MATCH (p)-[:BELONGS_TO]->(cat:Category)
+        WITH p, cat, count(r) AS verifiedBuys, coalesce(p.soldCount, 0) AS totalSold
+        RETURN p.id AS id,
+               p.name AS name,
+               p.price AS price,
+               p.originalPrice AS originalPrice,
+               p.discountPercent AS discountPercent,
+               p.imageUrl AS imageUrl,
+               p.rating AS rating,
+               totalSold AS soldCount,
+               cat.name AS categoryName,
+               round(5.0 + (totalSold * 0.01), 1) AS score,
+               totalSold AS coBoughtCount,
+               0 AS coViewedCount,
+               verifiedBuys AS totalCoCustomers,
+               "🔥 Bán chạy nhất tuần trên Shốp Pii (Dành cho bạn mới)" AS reason
+        ORDER BY totalSold DESC, p.rating DESC
+        LIMIT toInteger($limit)
+      `;
+            const fallbackResult = await session.run(coldStartCypher, {
+                limit: neo4j_driver_1.default.int(limit),
+            });
+            recommendations = fallbackResult.records.map((r) => ({
+                id: r.get('id'),
+                name: r.get('name'),
+                price: (0, neo4j_js_1.neo4jToPlain)(r.get('price')),
+                originalPrice: (0, neo4j_js_1.neo4jToPlain)(r.get('originalPrice')),
+                discountPercent: (0, neo4j_js_1.neo4jToPlain)(r.get('discountPercent')),
+                imageUrl: r.get('imageUrl'),
+                rating: (0, neo4j_js_1.neo4jToPlain)(r.get('rating')),
+                soldCount: (0, neo4j_js_1.neo4jToPlain)(r.get('soldCount')),
+                categoryName: r.get('categoryName'),
+                score: (0, neo4j_js_1.neo4jToPlain)(r.get('score')),
+                coBoughtCount: (0, neo4j_js_1.neo4jToPlain)(r.get('coBoughtCount')),
+                coViewedCount: (0, neo4j_js_1.neo4jToPlain)(r.get('coViewedCount')),
+                totalCoCustomers: (0, neo4j_js_1.neo4jToPlain)(r.get('totalCoCustomers')),
+                reason: r.get('reason'),
+            }));
+        }
+        res.json({
+            success: true,
+            meta: {
+                customerId,
+                customerName,
+                strategy,
+                totalItems: recommendations.length,
+                algorithmDescription: strategy === 'collaborative_filtering'
+                    ? 'Gợi ý cá nhân hóa dựa trên những người có sở thích tương tự bạn'
+                    : 'Sản phẩm thịnh hành được mua nhiều nhất trên Shốp Pii',
+            },
+            data: recommendations,
+        });
+    }
+    catch (error) {
+        console.error('Error generating recommendations:', error);
+        res.status(500).json({ success: false, message: error.message });
+    }
+    finally {
+        await session.close();
+    }
+};
+exports.getRecommendations = getRecommendations;
+const explainRecommendationQuery = async (req, res) => {
+    const session = (0, neo4j_js_1.getNeo4jSession)();
+    try {
+        const { customerId } = req.params;
+        const explainCypher = `
+      EXPLAIN
+      MATCH (c1:Customer {id: $customerId})
+      MATCH (c1)-[r1:BOUGHT|VIEWED]->(p1:Product)
+      MATCH (p1)<-[r_shared:BOUGHT|VIEWED]-(c2:Customer)
+      WHERE c2.id <> c1.id
+      MATCH (c2)-[r2:BOUGHT|VIEWED]->(p2:Product)
+      WHERE p2.id <> p1.id
+        AND NOT (c1)-[:BOUGHT]->(p2)
+      WITH p2,
+           count(DISTINCT CASE WHEN type(r2) = 'BOUGHT' THEN c2 END) AS coBoughtCount,
+           count(DISTINCT CASE WHEN type(r2) = 'VIEWED' THEN c2 END) AS coViewedCount
+      WITH p2, round(coBoughtCount * 3.0 + coViewedCount * 1.0, 2) AS score
+      RETURN p2.name AS productName, score
+      ORDER BY score DESC
+      LIMIT 10
+    `;
+        const result = await session.run(explainCypher, { customerId: customerId || 'CUST-001' });
+        const plan = result.summary.plan;
+        res.json({
+            success: true,
+            plan: plan ? serializePlan(plan) : null,
+            query: explainCypher.replace('EXPLAIN\n', '').trim(),
+        });
+    }
+    catch (error) {
+        console.error('Error explaining query:', error);
+        res.status(500).json({ success: false, message: error.message });
+    }
+    finally {
+        await session.close();
+    }
+};
+exports.explainRecommendationQuery = explainRecommendationQuery;
+const serializePlan = (plan) => {
+    return {
+        operatorType: plan.operatorType,
+        identifiers: plan.identifiers,
+        arguments: plan.arguments,
+        children: plan.children ? plan.children.map(serializePlan) : [],
+    };
+};

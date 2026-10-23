@@ -1,0 +1,20 @@
+services:
+  # Web Service Fullstack (Chạy cả API Backend và phục vụ giao diện Frontend)
+  - type: web
+    name: shoppii-recommendation-system
+    env: node
+    plan: free
+    region: singapore
+    buildCommand: "cd frontend && npm install && npm run build && cd ../backend && npm install && npm run build"
+    startCommand: "cd backend && npm start"
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NEO4J_URI
+        sync: false # Điền URI từ Neo4j Aura (neo4j+s://xxxx.databases.neo4j.io)
+      - key: NEO4J_USER
+        value: neo4j
+      - key: NEO4J_PASSWORD
+        sync: false # Điền mật khẩu từ Neo4j Aura
+      - key: NEO4J_DATABASE
+        value: neo4j
