@@ -3,12 +3,21 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-const uri = process.env.NEO4J_URI || 'bolt://localhost:7687';
-const user = process.env.NEO4J_USER || process.env.NEO4J_USERNAME || 'neo4j';
-const password = process.env.NEO4J_PASSWORD || 'recommendation123';
-const database = process.env.NEO4J_DATABASE || undefined;
+const clean = (val?: string): string => (val || '').trim().replace(/^["']|["']$/g, '');
 
-const driver = neo4j.driver(uri, neo4j.auth.basic(user, password));
+const normalizeUri = (rawUri?: string): string => {
+  const cleaned = clean(rawUri);
+  if (!cleaned) return 'bolt://localhost:7687';
+  if (!cleaned.includes('://')) {
+    return `neo4j+s://${cleaned}`;
+  }
+  return cleaned;
+};
+
+const uri = normalizeUri(process.env.NEO4J_URI);
+const user = clean(process.env.NEO4J_USER || process.env.NEO4J_USERNAME) || 'neo4j';
+const password = clean(process.env.NEO4J_PASSWORD) || 'recommendation123';
+const database = clean(process.env.NEO4J_DATABASE) || undefined;
 
 // 1. DANH MỤC (6 Categories)
 const categories = [
@@ -377,8 +386,8 @@ const generateRelationships = (products: any[], customers: any[]) => {
 
 // 5. HÀM CHÍNH SEED DỮ LIỆU
 export async function runSeed(customDriver?: Driver) {
-  const activeDriver = customDriver || driver;
   const shouldCloseDriver = !customDriver;
+  const activeDriver = customDriver || neo4j.driver(uri, neo4j.auth.basic(user, password));
   const session = activeDriver.session(database ? { database } : {});
 
   try {
