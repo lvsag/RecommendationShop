@@ -33,15 +33,26 @@ export const getNeo4jSession = (): Session => {
   return driver.session({ database });
 };
 
-export const verifyNeo4jConnection = async (): Promise<boolean> => {
+export const getNeo4jConfig = () => ({
+  uri: uri.replace(/:[^:@]+@/, ':****@'),
+  user,
+  database,
+  isDefaultLocal: uri.includes('localhost') || uri.includes('127.0.0.1'),
+});
+
+export const verifyNeo4jConnection = async (): Promise<{ connected: boolean; uri: string; error?: string }> => {
   try {
     const d = initNeo4jDriver();
     await d.verifyConnectivity();
     console.log('✅ [Neo4j] Connected successfully to database!');
-    return true;
-  } catch (error) {
-    console.error('❌ [Neo4j] Connection failed:', error);
-    return false;
+    return { connected: true, uri: uri.replace(/:[^:@]+@/, ':****@') };
+  } catch (error: any) {
+    console.error('❌ [Neo4j] Connection failed:', error?.message || error);
+    return {
+      connected: false,
+      uri: uri.replace(/:[^:@]+@/, ':****@'),
+      error: error?.message || String(error),
+    };
   }
 };
 

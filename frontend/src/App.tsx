@@ -16,6 +16,8 @@ import {
   logView,
   logBuy,
   checkoutCart,
+  getHealth,
+  seedDatabase,
 } from './api/client';
 import { Header } from './components/Header';
 import { HeroBanner } from './components/HeroBanner';
@@ -62,6 +64,14 @@ export const App: React.FC = () => {
   const [loadingProducts, setLoadingProducts] = useState<boolean>(false);
   const [loadingRecs, setLoadingRecs] = useState<boolean>(false);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
+  const [dbError, setDbError] = useState<{
+    isError: boolean;
+    message: string;
+    instruction?: string;
+    isDefaultLocalhost?: boolean;
+    uri?: string;
+  } | null>(null);
+  const [seeding, setSeeding] = useState<boolean>(false);
 
   // Sync Cart with localStorage
   useEffect(() => {
@@ -85,12 +95,59 @@ export const App: React.FC = () => {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   };
 
+  const checkDbHealth = useCallback(async () => {
+    try {
+      const health = await getHealth();
+      if (!health.database.connected) {
+        setDbError({
+          isError: true,
+          message: health.database.error || 'Chưa thể kết nối cơ sở dữ liệu Neo4j',
+          instruction: health.database.instruction,
+          isDefaultLocalhost: health.database.isDefaultLocalhost,
+          uri: health.database.uri,
+        });
+      } else {
+        setDbError(null);
+      }
+    } catch (e: any) {
+      setDbError({
+        isError: true,
+        message: 'Không thể kết nối đến Backend API',
+        instruction: 'Vui lòng kiểm tra lại dịch vụ Render hoặc mạng của bạn.',
+      });
+    }
+  }, []);
+
+  const handleSeedDatabase = async () => {
+    setSeeding(true);
+    addToast('info', 'Đang nạp dữ liệu', 'Đang nạp 108 sản phẩm & 50 khách hàng mẫu vào Neo4j...');
+    try {
+      const res = await seedDatabase();
+      if (res.success) {
+        addToast('success', 'Nạp dữ liệu thành công', 'Đã nạp 108 sản phẩm mẫu vào cơ sở dữ liệu Neo4j!');
+        setDbError(null);
+        setTimeout(() => window.location.reload(), 1200);
+      }
+    } catch (err: any) {
+      console.error(err);
+      addToast('error', 'Lỗi nạp dữ liệu', err.response?.data?.error || err.message || 'Thất bại');
+    } finally {
+      setSeeding(false);
+    }
+  };
+
   // 1. Fetch Categories & Customers on Mount
   useEffect(() => {
     // Categories
     getCategories()
-      .then((data) => setCategories(data))
-      .catch((err) => console.error('Lỗi tải danh mục:', err));
+      .then((data) => {
+        setCategories(data);
+        setDbError(null);
+      })
+      .catch((err) => {
+        console.error('Lỗi tải danh mục:', err);
+        checkDbHealth();
+      });
 
     // Customers
     getCustomers()
@@ -112,8 +169,11 @@ export const App: React.FC = () => {
           setSelectedCustomer(defaultCust);
         }
       })
-      .catch((err) => console.error('Lỗi tải danh sách khách hàng:', err));
-  }, []);
+      .catch((err) => {
+        console.error('Lỗi tải danh sách khách hàng:', err);
+        checkDbHealth();
+      });
+  }, [checkDbHealth]);
 
   // 2. Fetch Products with Filtering
   const fetchProducts = useCallback(async () => {
@@ -128,13 +188,14 @@ export const App: React.FC = () => {
       setProducts(res.data);
       setTotalPages(res.pagination.totalPages);
       setTotalProducts(res.pagination.total);
+      setDbError(null);
     } catch (err: any) {
       console.error('Lỗi nạp sản phẩm:', err);
-      addToast('error', 'Lỗi tải sản phẩm', err.message || 'Không thể kết nối Backend API');
+      checkDbHealth();
     } finally {
       setLoadingProducts(false);
     }
-  }, [page, selectedCategoryId, searchQuery]);
+  }, [page, selectedCategoryId, searchQuery, checkDbHealth]);
 
   useEffect(() => {
     fetchProducts();
@@ -332,6 +393,47 @@ export const App: React.FC = () => {
         onSearchSubmit={handleSearchSubmit}
         cartCount={totalCartCount}
       />
+
+      {/* Database Diagnostic & Warning Banner */}
+      {dbError?.isError && (
+        <div className="bg-amber-50 border-b border-amber-300 px-4 py-3 text-amber-950 shadow-xs">
+          <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-start md:items-center justify-between gap-3 text-xs md:text-sm">
+            <div className="flex items-start gap-2.5">
+              <span className="text-xl">⚠️</span>
+              <div>
+                <p className="font-bold text-amber-900">
+                  Chưa thể kết nối tới Cơ sở dữ liệu Neo4j trên Cloud:
+                </p>
+                <p className="text-amber-800 text-xs mt-0.5">
+                  {dbError.instruction || dbError.message}
+                </p>
+                {dbError.uri && (
+                  <p className="text-amber-700 font-mono text-[11px] mt-0.5">
+                    URI hiện tại: {dbError.uri}
+                  </p>
+                )}
+              </div>
+            </div>
+            <div className="flex items-center gap-2 shrink-0 self-end md:self-auto">
+              <a
+                href="/api/health"
+                target="_blank"
+                rel="noreferrer"
+                className="bg-white border border-amber-300 text-amber-900 hover:bg-amber-100 px-3 py-1.5 rounded text-xs font-semibold shadow-2xs transition"
+              >
+                Kiểm tra /api/health
+              </a>
+              <button
+                onClick={handleSeedDatabase}
+                disabled={seeding}
+                className="bg-orange-500 hover:bg-orange-600 disabled:opacity-50 text-white px-3 py-1.5 rounded text-xs font-bold shadow-2xs transition flex items-center gap-1"
+              >
+                {seeding ? 'Đang nạp...' : '🌱 Nạp dữ liệu mẫu'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Main Body */}
       <main className="flex-1 pb-16">

@@ -97,4 +97,29 @@ export const explainRecommendationQuery = async (customerId: string) => {
   return response.data;
 };
 
+export const getHealth = async () => {
+  const response = await api.get<{
+    status: string;
+    database: {
+      connected: boolean;
+      uri: string;
+      user: string;
+      databaseName: string;
+      isDefaultLocalhost: boolean;
+      error: string | null;
+      instruction: string;
+    };
+  }>('/health');
+  return response.data;
+};
+
+export const seedDatabase = async () => {
+  const response = await api.post<{
+    success: boolean;
+    message: string;
+    data: any;
+  }>('/admin/seed');
+  return response.data;
+};
+
 export default api;

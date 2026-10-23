@@ -1,4 +1,4 @@
-import neo4j from 'neo4j-driver';
+import neo4j, { Driver } from 'neo4j-driver';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -376,8 +376,10 @@ const generateRelationships = (products: any[], customers: any[]) => {
 };
 
 // 5. HÀM CHÍNH SEED DỮ LIỆU
-async function runSeed() {
-  const session = driver.session({ database });
+export async function runSeed(customDriver?: Driver) {
+  const activeDriver = customDriver || driver;
+  const shouldCloseDriver = !customDriver;
+  const session = activeDriver.session({ database });
 
   try {
     console.log('🚀 Bắt đầu quá trình Khởi tạo và Nạp Dữ liệu Mẫu (Seed Data) vào Neo4j...');
@@ -501,21 +503,30 @@ async function runSeed() {
     `);
 
     const stats = countCheck.records[0];
-    console.log('\n======================================================');
-    console.log('🎉 SEED DỮ LIỆU THÀNH CÔNG VÀ HOÀN TẤT!');
-    console.log(`- Danh mục (Category): ${stats.get('categoryCount')}`);
-    console.log(`- Sản phẩm (Product):  ${stats.get('productCount')} (Yêu cầu: >= 100)`);
-    console.log(`- Khách hàng (Customer): ${stats.get('customerCount')} (Yêu cầu: >= 50)`);
-    console.log(`- Cạnh Mua (BOUGHT):   ${stats.get('boughtCount')}`);
-    console.log(`- Cạnh Xem (VIEWED):   ${stats.get('viewedCount')}`);
-    console.log(`- TỔNG QUAN HỆ:        ${Number(stats.get('boughtCount')) + Number(stats.get('viewedCount'))} (Yêu cầu: >= 350)`);
-    console.log('======================================================\n');
-  } catch (error) {
+    const resultStats = {
+      categoryCount: stats.get('categoryCount').toNumber ? stats.get('categoryCount').toNumber() : Number(stats.get('categoryCount')),
+      productCount: stats.get('productCount').toNumber ? stats.get('productCount').toNumber() : Number(stats.get('productCount')),
+      customerCount: stats.get('customerCount').toNumber ? stats.get('customerCount').toNumber() : Number(stats.get('customerCount')),
+      boughtCount: stats.get('boughtCount').toNumber ? stats.get('boughtCount').toNumber() : Number(stats.get('boughtCount')),
+      viewedCount: stats.get('viewedCount').toNumber ? stats.get('viewedCount').toNumber() : Number(stats.get('viewedCount')),
+    };
+
+    return { success: true, stats: resultStats };
+  } catch (error: any) {
     console.error('❌ Lỗi trong quá trình Seed:', error);
+    return { success: false, error: error?.message || String(error) };
   } finally {
     await session.close();
-    await driver.close();
+    if (shouldCloseDriver && activeDriver) {
+      await activeDriver.close();
+    }
   }
 }
 
-runSeed();
+// Chạy trực tiếp khi gọi từ CLI: npm run seed
+if (process.argv[1] && (process.argv[1].includes('seed.ts') || process.argv[1].includes('seed.js'))) {
+  runSeed().then(() => process.exit(0)).catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}
