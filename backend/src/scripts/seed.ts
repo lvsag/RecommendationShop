@@ -4,9 +4,9 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 const uri = process.env.NEO4J_URI || 'bolt://localhost:7687';
-const user = process.env.NEO4J_USER || 'neo4j';
+const user = process.env.NEO4J_USER || process.env.NEO4J_USERNAME || 'neo4j';
 const password = process.env.NEO4J_PASSWORD || 'recommendation123';
-const database = process.env.NEO4J_DATABASE || 'neo4j';
+const database = process.env.NEO4J_DATABASE || undefined;
 
 const driver = neo4j.driver(uri, neo4j.auth.basic(user, password));
 
@@ -379,7 +379,7 @@ const generateRelationships = (products: any[], customers: any[]) => {
 export async function runSeed(customDriver?: Driver) {
   const activeDriver = customDriver || driver;
   const shouldCloseDriver = !customDriver;
-  const session = activeDriver.session({ database });
+  const session = activeDriver.session(database ? { database } : {});
 
   try {
     console.log('🚀 Bắt đầu quá trình Khởi tạo và Nạp Dữ liệu Mẫu (Seed Data) vào Neo4j...');

@@ -4,9 +4,9 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 const uri = process.env.NEO4J_URI || 'bolt://localhost:7687';
-const user = process.env.NEO4J_USER || 'neo4j';
+const user = process.env.NEO4J_USER || process.env.NEO4J_USERNAME || 'neo4j';
 const password = process.env.NEO4J_PASSWORD || 'recommendation123';
-const database = process.env.NEO4J_DATABASE || 'neo4j';
+const database = process.env.NEO4J_DATABASE || undefined;
 
 let driver: Driver;
 
@@ -21,7 +21,7 @@ export const initNeo4jDriver = (): Driver => {
       },
     });
 
-    console.log(`[Neo4j] Driver initialized connecting to ${uri}`);
+    console.log(`[Neo4j] Driver initialized connecting to ${uri.replace(/:[^:@]+@/, ':****@')}`);
   }
   return driver;
 };
@@ -30,13 +30,13 @@ export const getNeo4jSession = (): Session => {
   if (!driver) {
     initNeo4jDriver();
   }
-  return driver.session({ database });
+  return driver.session(database ? { database } : {});
 };
 
 export const getNeo4jConfig = () => ({
   uri: uri.replace(/:[^:@]+@/, ':****@'),
   user,
-  database,
+  database: database || '(default)',
   isDefaultLocal: uri.includes('localhost') || uri.includes('127.0.0.1'),
 });
 
