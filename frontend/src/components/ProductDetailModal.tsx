@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { Product } from '../types';
-import { getProductById } from '../api/client';
+import { Product, RecommendedProduct } from '../types';
+import { getProductById, getRelatedProducts } from '../api/client';
 import { X, Star, ShoppingCart, ShieldCheck, Truck, RefreshCw, Zap, Eye, RotateCcw } from 'lucide-react';
 
 interface ProductDetailModalProps {
@@ -8,6 +8,8 @@ interface ProductDetailModalProps {
   onClose: () => void;
   onBuy: (product: Product, quantity: number) => void;
   onAddToCart: (product: Product, quantity: number) => void;
+  onSelectProduct: (product: Product) => void;
+  customerId?: string;
 }
 
 export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
@@ -15,7 +17,10 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
   onClose,
   onBuy,
   onAddToCart,
+  onSelectProduct,
+  customerId,
 }) => {
+  const [related, setRelated] = useState<RecommendedProduct[]>([]);
   const [detailedProduct, setDetailedProduct] = useState<Product | null>(null);
   const [loading, setLoading] = useState(false);
   const [quantity, setQuantity] = useState(1);
@@ -33,6 +38,24 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
     }
   }, [product]);
 
+  useEffect(() => {
+    setRelated([]);
+    if (!product) return;
+    setQuantity(1);
+    getRelatedProducts(product.id, customerId, 6)
+      .then(setRelated)
+      .catch((err) => console.error('Lỗi tải gợi ý liên quan:', err));
+  }, [product?.id, customerId]);
+
+  useEffect(() => {
+    if (!product) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [product]);
+
   if (!product) return null;
 
   const current = detailedProduct || product;
@@ -45,15 +68,20 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 overflow-y-auto">
-      <div className="bg-white rounded-lg shadow-2xl max-w-3xl w-full overflow-hidden relative animate-scale-up my-8">
-        {/* Close Button */}
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+      onClick={onClose}
+    >
+      <div className="relative max-w-3xl w-full" onClick={(e) => e.stopPropagation()}>
         <button
           onClick={onClose}
-          className="absolute top-3 right-3 text-gray-400 hover:text-gray-600 bg-white/80 p-1.5 rounded-full z-10 transition"
+          aria-label="Đóng"
+          title="Đóng (Esc)"
+          className="absolute top-3 right-3 z-20 bg-white text-gray-500 hover:text-gray-900 shadow-md p-2 rounded-full transition"
         >
           <X className="w-5 h-5" />
         </button>
+        <div className="bg-white rounded-lg shadow-2xl overflow-y-auto max-h-[90vh] animate-scale-up">
 
         {loading ? (
           <div className="p-12 text-center text-gray-500 flex flex-col items-center">
@@ -201,6 +229,29 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
             </div>
           </div>
         )}
+
+        {related.length > 0 && (
+          <div className="border-t border-gray-100 p-6 bg-orange-50/40">
+            <h4 className="text-sm font-bold text-gray-800">Khách hàng xem sản phẩm này cũng quan tâm</h4>
+            <div className="flex gap-3 overflow-x-auto mt-3 pb-1">
+              {related.map((p) => (
+                <button
+                  key={p.id}
+                  onClick={() => onSelectProduct(p)}
+                  className="w-36 shrink-0 text-left bg-white border border-gray-100 rounded-sm overflow-hidden hover:border-[#ee4d2d]/50"
+                >
+                  <img src={p.imageUrl} alt="" className="w-full aspect-square object-cover" />
+                  <div className="p-2">
+                    <p className="text-xs text-gray-800 line-clamp-2 min-h-[2rem]">{p.name}</p>
+                    <p className="text-xs font-bold text-[#ee4d2d] mt-1">{formatCurrency(p.price)}</p>
+                    <p className="text-[11px] text-gray-500 mt-0.5">{p.reason}</p>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+        </div>
       </div>
     </div>
   );

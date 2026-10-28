@@ -26,6 +26,31 @@ export const getProducts = async (req: Request, res: Response): Promise<void> =>
       matchClause = 'MATCH (p:Product) OPTIONAL MATCH (p)-[:BELONGS_TO]->(cat:Category)';
     }
 
+    // Tìm kiếm không phân biệt hoa/thường và dấu tiếng Việt; mọi từ khóa phải khớp (tên hoặc danh mục)
+    if (search && search.trim()) {
+      const strip = (t: string) =>
+        t.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/g, 'd').replace(/Đ/g, 'D').toLowerCase();
+      const tokens = strip(search).split(/\s+/).filter(Boolean);
+      const all = await session.run(
+        `${matchClause}
+         RETURN p { .*, categoryName: cat.name, categoryId: cat.id } AS product
+         ORDER BY p.soldCount DESC, p.rating DESC`,
+        params
+      );
+      const matched = all.records
+        .map((r) => neo4jToPlain(r.get('product')) as any)
+        .filter((p) => {
+          const hay = strip(`${p.name || ''} ${p.categoryName || ''}`);
+          return tokens.every((t) => hay.includes(t));
+        });
+      res.json({
+        success: true,
+        data: matched.slice(skip, skip + limit),
+        pagination: { page, limit, total: matched.length, totalPages: Math.ceil(matched.length / limit) },
+      });
+      return;
+    }
+
     if (search) {
       whereClauses.push('toLower(p.name) CONTAINS toLower($search)');
       params.search = search;
