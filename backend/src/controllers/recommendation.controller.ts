@@ -207,3 +207,78 @@ const serializePlan = (plan: any): any => {
     children: plan.children ? plan.children.map(serializePlan) : [],
   };
 };
+
+// Gợi ý theo sản phẩm: "Khách xem/mua sản phẩm này cũng quan tâm"
+export const getRelatedProducts = async (req: Request, res: Response): Promise<void> => {
+  const session = getNeo4jSession();
+  try {
+    const { productId } = req.params;
+    const customerId = (req.query.customerId as string) || null;
+    const limit = Math.max(1, Math.min(12, parseInt(req.query.limit as string) || 6));
+
+    const fields = `p2.id AS id, p2.name AS name, p2.price AS price, p2.originalPrice AS originalPrice,
+      p2.discountPercent AS discountPercent, p2.imageUrl AS imageUrl, p2.rating AS rating,
+      p2.soldCount AS soldCount, cat.name AS categoryName`;
+
+    const cypher = `
+      MATCH (p:Product {id: $productId})<-[:BOUGHT|VIEWED]-(c:Customer)-[r:BOUGHT|VIEWED]->(p2:Product)
+      WHERE p2.id <> p.id
+        AND ($customerId IS NULL OR NOT EXISTS { (:Customer {id: $customerId})-[:BOUGHT]->(p2) })
+      WITH p2,
+           count(DISTINCT CASE WHEN type(r) = 'BOUGHT' THEN c END) AS coBoughtCount,
+           count(DISTINCT CASE WHEN type(r) = 'VIEWED' THEN c END) AS coViewedCount
+      OPTIONAL MATCH (p2)-[:BELONGS_TO]->(cat:Category)
+      RETURN ${fields}, coBoughtCount, coViewedCount,
+             coBoughtCount * 3.0 + coViewedCount AS score
+      ORDER BY score DESC, p2.soldCount DESC
+      LIMIT toInteger($limit)
+    `;
+    let result = await session.run(cypher, { productId, customerId, limit: neo4j.int(limit) });
+    let strategy = 'co_interaction';
+
+    if (result.records.length === 0) {
+      strategy = 'same_category';
+      result = await session.run(
+        `MATCH (p:Product {id: $productId})-[:BELONGS_TO]->(cat:Category)<-[:BELONGS_TO]-(p2:Product)
+         WHERE p2.id <> p.id
+         WITH p2, cat, 0 AS coBoughtCount, 0 AS coViewedCount, 0 AS score
+         RETURN ${fields}, coBoughtCount, coViewedCount, score
+         ORDER BY p2.soldCount DESC LIMIT toInteger($limit)`,
+        { productId, limit: neo4j.int(limit) }
+      );
+    }
+
+    const data = result.records.map((r) => {
+      const b = neo4jToPlain(r.get('coBoughtCount')) as number;
+      const v = neo4jToPlain(r.get('coViewedCount')) as number;
+      return {
+        id: r.get('id'),
+        name: r.get('name'),
+        price: neo4jToPlain(r.get('price')),
+        originalPrice: neo4jToPlain(r.get('originalPrice')),
+        discountPercent: neo4jToPlain(r.get('discountPercent')),
+        imageUrl: r.get('imageUrl'),
+        rating: neo4jToPlain(r.get('rating')),
+        soldCount: neo4jToPlain(r.get('soldCount')),
+        categoryName: r.get('categoryName'),
+        score: neo4jToPlain(r.get('score')),
+        coBoughtCount: b,
+        coViewedCount: v,
+        totalCoCustomers: b + v,
+        reason:
+          strategy === 'same_category'
+            ? 'Cùng danh mục'
+            : b > 0
+            ? `${b} khách đã mua cùng`
+            : `${v} khách cũng xem`,
+      };
+    });
+
+    res.json({ success: true, meta: { productId, strategy }, data });
+  } catch (error: any) {
+    console.error('Error getting related products:', error);
+    res.status(500).json({ success: false, message: error.message });
+  } finally {
+    await session.close();
+  }
+};

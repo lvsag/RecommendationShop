@@ -14,7 +14,6 @@ import {
   getCustomers,
   getRecommendations,
   logView,
-  logBuy,
   checkoutCart,
   getHealth,
   seedDatabase,
@@ -29,6 +28,8 @@ import { CartModal } from './components/CartModal';
 import { AuthModal } from './components/AuthModal';
 import { Neo4jInspectorModal } from './components/Neo4jInspectorModal';
 import { Toast } from './components/Toast';
+import { CheckoutModal, ShippingInfo } from './components/CheckoutModal';
+import { ProductGrid } from './components/ProductGrid';
 import { Grid, ChevronLeft, ChevronRight, ShoppingBag, Sparkles } from 'lucide-react';
 
 export const App: React.FC = () => {
@@ -41,6 +42,7 @@ export const App: React.FC = () => {
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [selectedCategoryId, setSelectedCategoryId] = useState<string>('');
   const [searchQuery, setSearchQuery] = useState<string>('');
+  const [debouncedSearch, setDebouncedSearch] = useState<string>('');
   const [page, setPage] = useState<number>(1);
   const [totalPages, setTotalPages] = useState<number>(1);
   const [totalProducts, setTotalProducts] = useState<number>(0);
@@ -71,6 +73,7 @@ export const App: React.FC = () => {
     isDefaultLocalhost?: boolean;
     uri?: string;
   } | null>(null);
+  const [checkout, setCheckout] = useState<{ items: CartItem[]; fromCart: boolean } | null>(null);
   const [seeding, setSeeding] = useState<boolean>(false);
 
   // Sync Cart with localStorage
@@ -81,6 +84,15 @@ export const App: React.FC = () => {
       console.error('Lỗi lưu giỏ hàng:', err);
     }
   }, [cartItems]);
+
+  // Debounce search: gõ xong 350ms mới gọi API, tránh dùng state cũ
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setDebouncedSearch(searchQuery);
+      setPage(1);
+    }, 350);
+    return () => clearTimeout(t);
+  }, [searchQuery]);
 
   // Toast Helper
   const addToast = (type: 'success' | 'info' | 'warning' | 'error', title: string, message: string) => {
@@ -183,7 +195,7 @@ export const App: React.FC = () => {
         page,
         limit: 15,
         category: selectedCategoryId || undefined,
-        search: searchQuery || undefined,
+        search: debouncedSearch || undefined,
       });
       setProducts(res.data);
       setTotalPages(res.pagination.totalPages);
@@ -195,7 +207,7 @@ export const App: React.FC = () => {
     } finally {
       setLoadingProducts(false);
     }
-  }, [page, selectedCategoryId, searchQuery, checkDbHealth]);
+  }, [page, selectedCategoryId, debouncedSearch, checkDbHealth]);
 
   useEffect(() => {
     fetchProducts();
@@ -238,7 +250,7 @@ export const App: React.FC = () => {
 
   const handleSearchSubmit = () => {
     setPage(1);
-    fetchProducts();
+    setDebouncedSearch(searchQuery);
   };
 
   // View Product Handler: Auto-logs VIEWED to Neo4j
@@ -291,55 +303,37 @@ export const App: React.FC = () => {
     setCartItems((prev) => prev.filter((item) => item.product.id !== productId));
   };
 
-  // Cart Checkout
-  const handleCheckout = async () => {
-    if (!selectedCustomer) {
-      addToast('warning', 'Chưa đăng nhập', 'Vui lòng đăng nhập hoặc chọn khách hàng để đặt hàng.');
-      setIsAuthOpen(true);
-      return;
-    }
-
-    const payload = cartItems.map((item) => ({
-      productId: item.product.id,
-      quantity: item.quantity,
-    }));
-
-    await checkoutCart(selectedCustomer.id, payload);
-    setCartItems([]);
-
-    addToast(
-      'success',
-      'Thanh Toán Thành Công!',
-      `Đơn hàng của bạn đã được ghi nhận. Shốp Pii đang cập nhật lại các gợi ý tương quan dành cho bạn!`
-    );
-
-    // Refresh recommendations immediately
-    await fetchRecommendations();
+  // Mở khung xác nhận + thanh toán cho cả giỏ hàng và "Mua ngay"
+  const requireLogin = () => {
+    addToast('warning', 'Chưa đăng nhập', 'Vui lòng đăng nhập hoặc chọn khách hàng trước khi đặt hàng.');
+    setIsAuthOpen(true);
   };
 
-  // Buy Single Product Immediately
-  const handleBuyProduct = async (product: Product, quantity = 1) => {
+  const handleCheckout = async () => {
+    if (!selectedCustomer) return requireLogin();
+    if (cartItems.length === 0) return;
+    setIsCartOpen(false);
+    setCheckout({ items: cartItems, fromCart: true });
+  };
+
+  const handleBuyProduct = async (product: Product, quantity = 1): Promise<boolean> => {
     if (!selectedCustomer) {
-      addToast('warning', 'Chưa đăng nhập', 'Vui lòng đăng nhập hoặc chọn khách hàng trước khi mua.');
-      setIsAuthOpen(true);
-      return;
+      requireLogin();
+      return false;
     }
+    setCheckout({ items: [{ product, quantity }], fromCart: false });
+    return true;
+  };
 
-    try {
-      await logBuy(selectedCustomer.id, product.id, quantity);
-
-      addToast(
-        'success',
-        'Mua Hàng Thành Công!',
-        `Đã đặt mua thành công: "${product.name.slice(0, 30)}...". Shốp Pii đang cập nhật lại gợi ý phù hợp nhất!`
-      );
-
-      // Refresh recommendations immediately
-      await fetchRecommendations();
-    } catch (err: any) {
-      console.error('Lỗi khi mua hàng:', err);
-      addToast('error', 'Lỗi giao dịch', err.message || 'Không thể tạo đơn hàng.');
-    }
+  // Đặt hàng thật: ghi quan hệ BOUGHT vào Neo4j rồi làm mới gợi ý
+  const handlePlaceOrder = async (_info: ShippingInfo) => {
+    if (!selectedCustomer || !checkout) return;
+    await checkoutCart(
+      selectedCustomer.id,
+      checkout.items.map((i) => ({ productId: i.product.id, quantity: i.quantity }))
+    );
+    if (checkout.fromCart) setCartItems([]);
+    await fetchRecommendations();
   };
 
   // Auth Success
@@ -436,19 +430,13 @@ export const App: React.FC = () => {
       )}
 
       {/* Main Body */}
-      <main className="flex-1 pb-16">
+      <main className="flex-1 w-full max-w-7xl mx-auto px-4 py-4 space-y-4">
         {/* Promotional Hero Banners */}
-        <HeroBanner />
-
-        {/* 6 Category Icons with real filtering */}
-        <CategoryList
-          categories={categories}
-          selectedCategoryId={selectedCategoryId}
-          onSelectCategory={handleSelectCategory}
-        />
+        {!debouncedSearch && <HeroBanner />}
 
         {/* GỢI Ý HÔM NAY (Real-time Adaptive Recommendations) */}
-        <RecommendationSection
+        {!debouncedSearch && (
+          <RecommendationSection
           recommendations={recommendations}
           meta={recommendationMeta}
           loading={loadingRecs}
@@ -457,50 +445,54 @@ export const App: React.FC = () => {
           onBuyProduct={(prod) => handleBuyProduct(prod, 1)}
           onAddToCart={(prod) => handleAddToCart(prod, 1)}
         />
+        )}
 
         {/* TOÀN BỘ SẢN PHẨM (Filtered by category & search) */}
-        <section className="max-w-7xl mx-auto px-4 mt-2">
-          <div className="bg-white rounded-sm shadow-sm p-4 border border-gray-100">
+        <section>
+          <div className="bg-white rounded-sm p-4 border border-gray-100">
             {/* Section Header */}
             <div className="flex items-center justify-between border-b border-gray-100 pb-3 mb-4">
               <div className="flex items-center gap-2">
                 <Grid className="w-5 h-5 text-[#ee4d2d]" />
-                <h3 className="text-base font-bold text-gray-800 uppercase tracking-wide">
-                  {selectedCategoryId
-                    ? `SẢN PHẨM: ${categories.find((c) => c.id === selectedCategoryId)?.name || ''}`
-                    : 'GỢI Ý TẤT CẢ SẢN PHẨM SHỐP PII'}
+                <h3 className="text-base font-bold text-gray-800 ">
+                  {debouncedSearch
+                  ? `Kết quả cho "${debouncedSearch}"`
+                  : selectedCategoryId
+                  ? `DANH MỤC: ${categories.find((c) => c.id === selectedCategoryId)?.name || ''}`
+                  : 'TẤT CẢ SẢN PHẨM'}
                 </h3>
               </div>
-              <span className="text-xs text-gray-500">
+              <div className="flex items-center gap-3">
+                <span className="text-xs text-gray-500">
                 Hiển thị {products.length} / {totalProducts} sản phẩm
               </span>
+                {debouncedSearch && (
+                  <button
+                    onClick={() => { setSearchQuery(''); setDebouncedSearch(''); setPage(1); }}
+                    className="text-xs text-[#ee4d2d] border border-[#ee4d2d] rounded px-2 py-1 hover:bg-orange-50"
+                  >
+                    Xóa tìm kiếm
+                  </button>
+                )}
+              </div>
             </div>
 
-            {/* Products Grid */}
-            {loadingProducts ? (
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
-                {Array.from({ length: 10 }).map((_, i) => (
-                  <div key={i} className="bg-gray-100 rounded animate-pulse h-72"></div>
-                ))}
-              </div>
-            ) : products.length === 0 ? (
-              <div className="text-center py-16 text-gray-500">
-                <ShoppingBag className="w-12 h-12 text-gray-300 mx-auto mb-2" />
-                <p className="text-sm">Không tìm thấy sản phẩm nào trong danh mục này.</p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
-                {products.map((prod) => (
-                  <ProductCard
-                    key={prod.id}
-                    product={prod}
-                    onView={handleViewProduct}
-                    onBuy={(p) => handleBuyProduct(p, 1)}
-                    onAddToCart={(p) => handleAddToCart(p, 1)}
-                  />
-                ))}
-              </div>
-            )}
+            <div className="mb-4">
+              <CategoryList
+                categories={categories}
+                selectedCategoryId={selectedCategoryId}
+                onSelectCategory={handleSelectCategory}
+              />
+            </div>
+
+            <ProductGrid
+              products={products}
+              loading={loadingProducts}
+              emptyMessage={debouncedSearch ? `Không tìm thấy sản phẩm nào cho "${debouncedSearch}". Thử từ khóa ngắn hơn hoặc đổi từ khác.` : undefined}
+              onView={handleViewProduct}
+              onBuy={(p) => handleBuyProduct(p, 1)}
+              onAddToCart={(p) => handleAddToCart(p, 1)}
+            />
 
             {/* Pagination */}
             {totalPages > 1 && (
@@ -545,8 +537,8 @@ export const App: React.FC = () => {
       </main>
 
       {/* Shốp Pii Footer */}
-      <footer className="bg-white border-t-4 border-[#ee4d2d] text-gray-600 text-xs py-8 mt-12">
-        <div className="max-w-7xl mx-auto px-4 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-6 pb-6 border-b border-gray-100">
+      <footer className="bg-white border-t-4 border-[#ee4d2d] text-gray-600 text-xs py-8 mt-4">
+        <div className="max-w-7xl mx-auto px-4 grid grid-cols-1 sm:grid-cols-3 gap-6 pb-6 border-b border-gray-100">
           <div>
             <h4 className="font-bold text-gray-800 uppercase mb-3">CHĂM SÓC KHÁCH HÀNG</h4>
             <ul className="space-y-1.5 text-gray-500">
@@ -574,12 +566,6 @@ export const App: React.FC = () => {
               <span className="bg-gray-100 px-2 py-1 rounded">SPayLater</span>
             </div>
             <p className="mt-3 text-[11px] text-gray-400">Đơn vị vận chuyển: SPX Express, GHTK, Viettel Post</p>
-          </div>
-          <div>
-            <h4 className="font-bold text-gray-800 uppercase mb-3">THUẬT TOÁN GỢI Ý</h4>
-            <p className="text-gray-500 leading-relaxed">
-              Trang web áp dụng thuật toán <strong>Collaborative Filtering</strong> dựa trên mạng lưới đồ thị liên kết hành vi mua sắm cùng nhau, tối ưu hóa trải nghiệm cá nhân hóa người dùng.
-            </p>
           </div>
         </div>
         <div className="max-w-7xl mx-auto px-4 pt-6 text-center text-gray-400">
@@ -611,6 +597,16 @@ export const App: React.FC = () => {
         onClose={() => setActiveProductDetail(null)}
         onBuy={(prod, qty) => handleBuyProduct(prod, qty)}
         onAddToCart={(prod, qty) => handleAddToCart(prod, qty)}
+        onSelectProduct={handleViewProduct}
+        customerId={selectedCustomer?.id}
+      />
+
+      <CheckoutModal
+        isOpen={checkout !== null}
+        items={checkout?.items || []}
+        customer={selectedCustomer}
+        onClose={() => setCheckout(null)}
+        onPlaceOrder={handlePlaceOrder}
       />
 
       {/* Neo4j Graph Inspector Modal */}

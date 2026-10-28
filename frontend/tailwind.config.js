@@ -6,6 +6,10 @@ export default {
   ],
   theme: {
     extend: {
+      keyframes: {
+        'slide-in': { from: { transform: 'translateX(16px)', opacity: '0' }, to: { transform: 'none', opacity: '1' } },
+      },
+      animation: { 'slide-in': 'slide-in 0.25s ease-out' },
       colors: {
         shopee: {
           primary: '#ee4d2d',

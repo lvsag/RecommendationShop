@@ -40,7 +40,6 @@ export const CartModal: React.FC<CartModalProps> = ({
     setCheckingOut(true);
     try {
       await onCheckout();
-      setOrderSuccess(true);
     } catch (err) {
       console.error(err);
     } finally {

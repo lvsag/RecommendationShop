@@ -88,6 +88,14 @@ export const getRecommendations = async (customerId: string, limit = 10) => {
   return response.data;
 };
 
+export const getRelatedProducts = async (productId: string, customerId?: string, limit = 6) => {
+  const response = await api.get<{ success: boolean; data: RecommendedProduct[] }>(
+    `/recommendations/product/${productId}`,
+    { params: { customerId, limit } }
+  );
+  return response.data.data;
+};
+
 export const explainRecommendationQuery = async (customerId: string) => {
   const response = await api.get<{
     success: boolean;
