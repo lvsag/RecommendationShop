@@ -22,8 +22,7 @@ RecommendationProject/
 ├── database/
 │   ├── schema.cypher               # Ràng buộc toàn vẹn & Index tối ưu hóa
 │   ├── recommendations.cypher      # Thuật toán Collaborative Filtering, Cold-start & PROFILE/EXPLAIN
-│   ├── seed_data.cypher            # File Cypher thuần hỗ trợ chạy trên Neo4j Browser
-│   └── explain_profile_analysis.md # Báo cáo phân tích chuyên sâu DB Hits & Operators của SV2
+│   └── seed_data.cypher            # File Cypher thuần hỗ trợ chạy trên Neo4j Browser
 ├── backend/
 │   ├── package.json
 │   ├── tsconfig.json
@@ -34,18 +33,14 @@ RecommendationProject/
 │       ├── routes/                 # Express REST Endpoints
 │       ├── scripts/seed.ts         # Script nạp 108 sản phẩm, 50 khách hàng & 450+ quan hệ
 │       └── server.ts               # Entrypoint Backend API (Port 5000)
-├── frontend/
-│   ├── package.json
-│   ├── vite.config.ts              # Proxy /api tới Backend port 5000
-│   ├── tailwind.config.js          # Cấu hình bảng màu Shopee #ee4d2d
-│   └── src/
-│       ├── components/             # Header, HeroBanner, CategoryList, ProductCard, Neo4jInspector...
-│       ├── api/client.ts           # Axios HTTP client
-│       └── App.tsx                 # Luồng điều khiển Shopee & Real-time Recommender
-└── docs/
-    ├── HUONG_DAN_NEO4J_DESKTOP.md  # Hướng dẫn chi tiết từng bước dùng Neo4j Desktop (GUI)
-    ├── KICH_BAN_DEMO_BAO_VE.md     # Kịch bản từng bước nói trước hội đồng cho 3 sinh viên
-    └── BAO_CAO_KIEN_TRUC.md        # Báo cáo kiến trúc hệ thống và so sánh hiệu năng SQL vs Graph
+└── frontend/
+    ├── package.json
+    ├── vite.config.ts              # Proxy /api tới Backend port 5000
+    ├── tailwind.config.js          # Cấu hình bảng màu Shopee #ee4d2d
+    └── src/
+        ├── components/             # Header, HeroBanner, CategoryList, ProductCard, Neo4jInspector...
+        ├── api/client.ts           # Axios HTTP client
+        └── App.tsx                 # Luồng điều khiển Shopee & Real-time Recommender
 ```
 
 ---
@@ -100,7 +95,6 @@ NEO4J_USER=neo4j
 NEO4J_PASSWORD=recommendation123
 NEO4J_DATABASE=neo4j
 ```
-> *(Xem hướng dẫn chi tiết có hình ảnh tại: [docs/HUONG_DAN_NEO4J_DESKTOP.md](file:///d:/NoSQL/RecommendationProject/docs/HUONG_DAN_NEO4J_DESKTOP.md))*
 
 ---
 
@@ -163,11 +157,3 @@ npm run dev
    - Chuyển sang tài khoản **`CUST-004` (Cold-Start)** để chứng minh hệ thống chuyển mượt mà sang Fallback Top Bán Chạy.
    - Mở Neo4j Browser [http://localhost:7474](http://localhost:7474) hiển thị đồ thị mạng nhện sinh động.
 
----
-
-## 📚 TÀI LIỆU KÈM THEO
-- **Hướng dẫn Deploy lên Render & Neo4j Aura Cloud:** [docs/HUONG_DAN_DEPLOY_RENDER.md](file:///d:/NoSQL/RecommendationProject/docs/HUONG_DAN_DEPLOY_RENDER.md)
-- **Cẩm nang sử dụng Neo4j Desktop chi tiết:** [docs/HUONG_DAN_NEO4J_DESKTOP.md](file:///d:/NoSQL/RecommendationProject/docs/HUONG_DAN_NEO4J_DESKTOP.md)
-- **Kịch bản chi tiết từng lời thoại:** [docs/KICH_BAN_DEMO_BAO_VE.md](file:///d:/NoSQL/RecommendationProject/docs/KICH_BAN_DEMO_BAO_VE.md)
-- **Báo cáo kiến trúc kỹ thuật:** [docs/BAO_CAO_KIEN_TRUC.md](file:///d:/NoSQL/RecommendationProject/docs/BAO_CAO_KIEN_TRUC.md)
-- **Phân tích chi tiết PROFILE & EXPLAIN:** [database/explain_profile_analysis.md](file:///d:/NoSQL/RecommendationProject/database/explain_profile_analysis.md)

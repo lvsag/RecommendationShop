@@ -25,3 +25,7 @@ Thumbs.db
 # Logs
 *.log
 logs/
+
+# Documentation & Analysis (Internal / Local only)
+docs/
+database/explain_profile_analysis.md
